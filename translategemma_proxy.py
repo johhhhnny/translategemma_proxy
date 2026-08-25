@@ -5,6 +5,8 @@ import uvicorn
 import re
 import json
 import asyncio
+import time
+import uuid
 from mlx_lm import load, stream_generate
 
 app = FastAPI()
@@ -102,7 +104,9 @@ async def catch_all(path: str, request: Request):
 
         # 检查插件是否显式要求流式
         is_stream_requested = body.get("stream", False)
-        print(f"\n⚡ [网关捕获] 成功截获请求！客户端期望模式: {'【流式 Stream】' if is_stream_requested else '【普通 JSON】'}")
+        request_id = uuid.uuid4().hex[:12]
+        print(f"\n⚡ [{request_id}] [网关捕获] 客户端期望模式: {'【流式 Stream】' if is_stream_requested else '【普通 JSON】'}")
+        print(f"🌐 [{request_id}] 翻译方向: {source_lang} -> {target_lang}")
         
         # 1. 过滤前缀
         clean_text = re.sub(r'^.*?(：|:)\s*', '', raw_text, flags=re.DOTALL).strip()
@@ -130,22 +134,27 @@ async def catch_all(path: str, request: Request):
     # --- 轨条一：如果插件要流式（Stream） ---
     if is_stream_requested:
         async def event_generator():
-            print("🧠 M1 Pro 正在全速进行【流式同步】分发...")
+            started_at = time.perf_counter()
+            print(f"🧠 [{request_id}] M1 Pro 正在进行【流式同步】分发...")
             count = 0
-            for chunk in stream_generate(model, tokenizer, prompt=prompt):
-                chunk_text = chunk.text if hasattr(chunk, "text") else (chunk["text"] if isinstance(chunk, dict) and "text" in chunk else str(chunk))
-                if any(sw in chunk_text for sw in stop_tokens):
-                    print("🛑 拦截到结束符，流式刹车成功！")
-                    break
-                
-                chunk_data = {
-                    "id": "chatcmpl-localproxy", "object": "chat.completion.chunk", "created": 1677652288, "model": "translategemma",
-                    "choices": [{"index": 0, "delta": {"content": chunk_text}, "finish_reason": None}]
-                }
-                yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0.001)
-                count += 1
-                if count > 1200: break
+            try:
+                for chunk in stream_generate(model, tokenizer, prompt=prompt):
+                    chunk_text = chunk.text if hasattr(chunk, "text") else (chunk["text"] if isinstance(chunk, dict) and "text" in chunk else str(chunk))
+                    if any(sw in chunk_text for sw in stop_tokens):
+                        print(f"🛑 [{request_id}] 拦截到结束符，流式刹车成功！")
+                        break
+
+                    chunk_data = {
+                        "id": "chatcmpl-localproxy", "object": "chat.completion.chunk", "created": 1677652288, "model": "translategemma",
+                        "choices": [{"index": 0, "delta": {"content": chunk_text}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.001)
+                    count += 1
+                    if count > 1200: break
+            finally:
+                elapsed = time.perf_counter() - started_at
+                print(f"⏱️ [{request_id}] 流式推理耗时: {elapsed:.2f}s，输出片段: {count}")
                     
             end_data = {
                 "id": "chatcmpl-localproxy", "object": "chat.completion.chunk", "created": 1677652288, "model": "translategemma",
@@ -153,27 +162,32 @@ async def catch_all(path: str, request: Request):
             }
             yield f"data: {json.dumps(end_data, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
-            print("🌸 流式响应圆满结束。")
+            print(f"🌸 [{request_id}] 流式响应圆满结束。")
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     # --- 轨条二：如果插件要普通 JSON ---
     else:
-        print("🧠 M1 Pro 正在全速进行【非流式打包】推理...")
+        started_at = time.perf_counter()
+        print(f"🧠 [{request_id}] M1 Pro 正在进行【非流式打包】推理...")
         translated_chunks = []
         count = 0
-        for chunk in stream_generate(model, tokenizer, prompt=prompt):
-            chunk_text = chunk.text if hasattr(chunk, "text") else (chunk["text"] if isinstance(chunk, dict) and "text" in chunk else str(chunk))
-            if any(sw in chunk_text for sw in stop_tokens):
-                print("🛑 拦截到结束符，打包刹车成功！")
-                break
-            translated_chunks.append(chunk_text)
-            count += 1
-            if count > 1200: break
+        try:
+            for chunk in stream_generate(model, tokenizer, prompt=prompt):
+                chunk_text = chunk.text if hasattr(chunk, "text") else (chunk["text"] if isinstance(chunk, dict) and "text" in chunk else str(chunk))
+                if any(sw in chunk_text for sw in stop_tokens):
+                    print(f"🛑 [{request_id}] 拦截到结束符，打包刹车成功！")
+                    break
+                translated_chunks.append(chunk_text)
+                count += 1
+                if count > 1200: break
+        finally:
+            elapsed = time.perf_counter() - started_at
+            print(f"⏱️ [{request_id}] 非流式推理耗时: {elapsed:.2f}s，输出片段: {count}")
 
         final_result = "".join(translated_chunks).strip()
         final_result = final_result.split("<end_of_turn>")[0].strip()
-        print(f"🌸 打包组装完成，成功获得译文: {final_result[:30]}...")
+        print(f"🌸 [{request_id}] 打包组装完成，成功获得译文: {final_result[:30]}...")
 
         # 返回最标准的、绝对不会报 Unexpected token 'd' 错误的纯正 JSON 字典
         return {
