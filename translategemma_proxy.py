@@ -1,13 +1,45 @@
+import asyncio
+import json
+import os
+import re
+import time
+import uuid
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import uvicorn
-import re
-import json
-import asyncio
-import time
-import uuid
 from mlx_lm import load, stream_generate
+import uvicorn
+
+
+def _load_dotenv() -> None:
+    config_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.isfile(config_path):
+        return
+
+    with open(config_path, encoding="utf-8") as config_file:
+        for line in config_file:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            name, value = line.split("=", 1)
+            name = name.strip()
+            value = value.strip().strip("\"'")
+            if name:
+                os.environ.setdefault(name, value)
+
+
+_load_dotenv()
+
+MODEL_PATH = os.getenv(
+    "TRANSLATEGEMMA_MODEL_PATH",
+    "/Users/zy/.lmstudio/models/mlx-community/translategemma-4b-it-8bit",
+)
+HOST = os.getenv("TRANSLATEGEMMA_HOST", "127.0.0.1")
+PORT = int(os.getenv("TRANSLATEGEMMA_PORT", "8001"))
+DEFAULT_SOURCE_LANG = os.getenv("TRANSLATEGEMMA_SOURCE_LANG", "en")
+DEFAULT_TARGET_LANG = os.getenv("TRANSLATEGEMMA_TARGET_LANG", "zh")
+MAX_CHUNKS = int(os.getenv("TRANSLATEGEMMA_MAX_CHUNKS", "1200"))
 
 app = FastAPI()
 
@@ -17,8 +49,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-MODEL_PATH = "/Users/zy/.lmstudio/models/mlx-community/translategemma-4b-it-8bit"
 
 print("正在将 TranslateGemma 动力核心直接加载至 Mac M1 Pro 内存中...")
 model = None
@@ -87,7 +117,7 @@ def _extract_request_data(body: dict) -> tuple[str, str, str]:
     if not raw_text:
         raise ValueError("message content must contain text")
 
-    return raw_text, source_lang or "en", target_lang or "zh"
+    return raw_text, source_lang or DEFAULT_SOURCE_LANG, target_lang or DEFAULT_TARGET_LANG
 
 
 @app.post("/{path:path}")
@@ -151,7 +181,7 @@ async def catch_all(path: str, request: Request):
                     yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.001)
                     count += 1
-                    if count > 1200: break
+                    if count > MAX_CHUNKS: break
             finally:
                 elapsed = time.perf_counter() - started_at
                 print(f"⏱️ [{request_id}] 流式推理耗时: {elapsed:.2f}s，输出片段: {count}")
@@ -180,7 +210,7 @@ async def catch_all(path: str, request: Request):
                     break
                 translated_chunks.append(chunk_text)
                 count += 1
-                if count > 1200: break
+                if count > MAX_CHUNKS: break
         finally:
             elapsed = time.perf_counter() - started_at
             print(f"⏱️ [{request_id}] 非流式推理耗时: {elapsed:.2f}s，输出片段: {count}")
@@ -203,4 +233,4 @@ async def catch_all(path: str, request: Request):
         }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    uvicorn.run(app, host=HOST, port=PORT)
