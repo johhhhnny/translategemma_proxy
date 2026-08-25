@@ -2,13 +2,13 @@
 
 一个自用的本地翻译代理，让“沉浸式翻译”或其他 OpenAI 兼容客户端通过本地 TranslateGemma 模型完成翻译。
 
-代理提供 OpenAI Chat Completions 风格接口，支持普通 JSON 响应和 `stream: true` 的 SSE 流式响应。
-
 ## 为什么需要这个项目
 
-“沉浸式翻译”适合在阅读网页时自动提取文本并逐段翻译，但使用在线翻译服务通常需要上传网页内容、依赖网络连接，并可能产生 API 费用。将请求转发到本机模型，可以让翻译数据尽量留在本机，同时降低对外部服务和网络的依赖。
+“沉浸式翻译”适合在阅读网页时自动提取文本并逐段翻译，但使用在线翻译服务依赖网络并可能产生 API 费用。使用本地模型，可以让翻译数据尽量留在本地，并降低对外部服务和网络的依赖。
 
-选择 TranslateGemma，是因为它专门针对翻译任务训练，并提供适合 Apple Silicon 和 MLX 生态的本地模型版本。相比通用聊天模型，它更适合作为翻译代理的推理核心。
+## 为什么选择 TranslateGemma
+
+TranslateGemma 专门针对翻译任务训练，并提供适合 Apple Silicon 和 MLX 生态的本地模型版本。相比通用聊天模型，它更适合作为翻译代理的推理核心。
 
 不过，TranslateGemma 的输入格式与 OpenAI Chat Completions 以及“沉浸式翻译”发送的数据格式并不完全相同，主要差异包括：
 
@@ -48,16 +48,7 @@
 ~/.lmstudio/models/mlx-community/translategemma-4b-it-8bit
 ```
 
-这里的 `~` 代表当前用户的 Home 目录，例如 `/Users/zy`。使用 `~` 比写死某个用户名更容易在其他 Mac 用户或机器上复用；程序启动时会自动展开该路径。
-
 ## 安装
-
-在项目目录中创建并激活虚拟环境：
-
-```bash
-python3.10 -m venv .venv
-source .venv/bin/activate
-```
 
 安装依赖：
 
@@ -84,12 +75,9 @@ TRANSLATEGEMMA_TARGET_LANG=zh
 TRANSLATEGEMMA_MAX_CHUNKS=1200
 ```
 
-`.env` 是本机配置，不应提交到 Git；`.env.example` 用于记录配置项和提供模板。
-
 ## 启动
 
 ```bash
-source .venv/bin/activate
 python translategemma_proxy.py
 ```
 
@@ -155,36 +143,6 @@ curl http://127.0.0.1:8001/v1/chat/completions \
 ```
 
 未提供语言参数时，使用 `.env` 中的默认值，默认是 `en -> zh`。
-
-## 常见问题
-
-### 找不到 `fastapi` 或 `mlx_lm`
-
-确认已激活项目虚拟环境，并使用同一个环境安装和运行：
-
-```bash
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python translategemma_proxy.py
-```
-
-### `No Metal device available`
-
-这通常表示程序运行在无法访问 Metal GPU 的沙盒、远程会话或受限终端中。请在 Mac 本机普通终端中启动，而不是在受限的 VS Code 沙盒终端中启动。
-
-### 模型加载失败
-
-检查 `.env` 中的 `TRANSLATEGEMMA_MODEL_PATH` 是否指向真实存在的 MLX 模型目录，并确认当前用户有读取权限。
-
-### 端口被占用
-
-修改 `.env`：
-
-```dotenv
-TRANSLATEGEMMA_PORT=8002
-```
-
-然后重新启动代理。
 
 ## 许可证
 
