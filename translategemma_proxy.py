@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import uvicorn
@@ -19,18 +19,87 @@ app.add_middleware(
 MODEL_PATH = "/Users/zy/.lmstudio/models/mlx-community/translategemma-4b-it-8bit"
 
 print("正在将 TranslateGemma 动力核心直接加载至 Mac M1 Pro 内存中...")
+model = None
+tokenizer = None
+model_load_error = None
 try:
     model, tokenizer = load(MODEL_PATH)
     print("🎉 模型加载成功！智能双轨通道已建立。")
 except Exception as e:
+    model_load_error = e
     print(f"❌ 加载模型失败，请检查路径。错误: {str(e)}")
+
+def _language_value(source: dict, names: tuple[str, ...]) -> str | None:
+    for name in names:
+        value = source.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _extract_request_data(body: dict) -> tuple[str, str, str]:
+    if not isinstance(body, dict):
+        raise ValueError("request body must be an object")
+
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("messages must be a non-empty list")
+
+    message = messages[-1]
+    if not isinstance(message, dict):
+        raise ValueError("the last message must be an object")
+
+    language_names = {
+        "source": ("source_lang_code", "source_lang", "source_language"),
+        "target": ("target_lang_code", "target_lang", "target_language"),
+    }
+    source_lang = _language_value(body, language_names["source"])
+    target_lang = _language_value(body, language_names["target"])
+    source_lang = source_lang or _language_value(message, language_names["source"])
+    target_lang = target_lang or _language_value(message, language_names["target"])
+
+    content = message.get("content")
+    text_parts = []
+    if isinstance(content, str):
+        text_parts.append(content)
+    elif isinstance(content, dict):
+        content_text = content.get("text")
+        if isinstance(content_text, str):
+            text_parts.append(content_text)
+        source_lang = source_lang or _language_value(content, language_names["source"])
+        target_lang = target_lang or _language_value(content, language_names["target"])
+    elif isinstance(content, list):
+        for part in content:
+            if isinstance(part, str):
+                text_parts.append(part)
+            elif isinstance(part, dict):
+                part_text = part.get("text")
+                if isinstance(part_text, str):
+                    text_parts.append(part_text)
+                source_lang = source_lang or _language_value(part, language_names["source"])
+                target_lang = target_lang or _language_value(part, language_names["target"])
+    else:
+        raise ValueError("message content must be a string, object, or list")
+
+    raw_text = "".join(text_parts).strip()
+    if not raw_text:
+        raise ValueError("message content must contain text")
+
+    return raw_text, source_lang or "en", target_lang or "zh"
+
 
 @app.post("/{path:path}")
 async def catch_all(path: str, request: Request):
+    if model is None or tokenizer is None:
+        detail = "TranslateGemma model is unavailable"
+        if model_load_error:
+            detail = f"{detail}: {model_load_error}"
+        raise HTTPException(status_code=503, detail=detail)
+
     try:
         body = await request.json()
-        raw_text = body["messages"][-1]["content"]
-        
+        raw_text, source_lang, target_lang = _extract_request_data(body)
+
         # 检查插件是否显式要求流式
         is_stream_requested = body.get("stream", False)
         print(f"\n⚡ [网关捕获] 成功截获请求！客户端期望模式: {'【流式 Stream】' if is_stream_requested else '【普通 JSON】'}")
@@ -45,14 +114,14 @@ async def catch_all(path: str, request: Request):
         clean_text = re.sub(r'\n\s*\n', '\n', clean_text)
         
         print(f"🧼 脱水过滤完成: {repr(clean_text[:50])}...")
-    except Exception as e:
-        return {"error": "Invalid OpenAI request format"}
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid OpenAI request format: {e}") from e
 
     # 组装 Prompt 模板
     messages = [{
         "role": "user",
         "content": [{
-            "type": "text", "source_lang_code": "en", "target_lang_code": "zh", "text": clean_text
+            "type": "text", "source_lang_code": source_lang, "target_lang_code": target_lang, "text": clean_text
         }]
     }]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -118,10 +187,6 @@ async def catch_all(path: str, request: Request):
                 "finish_reason": "stop"
             }]
         }
-
-@app.post("/{path:path}")
-async def catch_all(path: str, request: Request):
-    return await process_any_request(request)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8001)
