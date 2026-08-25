@@ -33,8 +33,9 @@ _load_dotenv()
 
 MODEL_PATH = os.getenv(
     "TRANSLATEGEMMA_MODEL_PATH",
-    "/Users/zy/.lmstudio/models/mlx-community/translategemma-4b-it-8bit",
+    "~/.lmstudio/models/mlx-community/translategemma-4b-it-8bit",
 )
+MODEL_PATH = os.path.expanduser(MODEL_PATH)
 HOST = os.getenv("TRANSLATEGEMMA_HOST", "127.0.0.1")
 PORT = int(os.getenv("TRANSLATEGEMMA_PORT", "8001"))
 DEFAULT_SOURCE_LANG = os.getenv("TRANSLATEGEMMA_SOURCE_LANG", "en")
