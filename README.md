@@ -53,7 +53,9 @@ TranslateGemma 专门针对翻译任务训练，并提供适合 Apple Silicon �
 安装依赖：
 
 ```bash
-python -m pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
 ```
 
 ## 配置
@@ -78,7 +80,9 @@ TRANSLATEGEMMA_MAX_CHUNKS=1200
 ## 启动
 
 ```bash
-python translategemma_proxy.py
+python3 -m venv venv
+source .venv/bin/activate                 
+python3 translategemma_proxy.py
 ```
 
 服务默认监听：
